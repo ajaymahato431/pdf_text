@@ -9,8 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ocrmypdf \
     poppler-utils \
     tesseract-ocr \
+    tesseract-ocr-eng \
     tesseract-ocr-nep \
     tesseract-ocr-hin \
+    unpaper \
     fonts-lohit-deva \
     && rm -rf /var/lib/apt/lists/*
 

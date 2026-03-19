@@ -148,6 +148,24 @@ def _devanagari_ratio(text: str) -> float:
     return devanagari_count / len(non_ws)
 
 
+def _ascii_alnum_ratio(text: str) -> float:
+    """Return the fraction of non-whitespace characters that are ASCII A-Za-z0-9."""
+    non_ws = text.translate(_WS_REMOVAL)
+    if not non_ws:
+        return 0.0
+    alnum_count = sum(1 for char in non_ws if char.isascii() and char.isalnum())
+    return alnum_count / len(non_ws)
+
+
+def _ascii_printable_ratio(text: str) -> float:
+    """Return the fraction of non-whitespace characters that are printable ASCII."""
+    non_ws = text.translate(_WS_REMOVAL)
+    if not non_ws:
+        return 0.0
+    printable_count = sum(1 for char in non_ws if 32 <= ord(char) <= 126)
+    return printable_count / len(non_ws)
+
+
 def _junk_ratio(text: str) -> float:
     """Return the fraction of non-whitespace characters that are 'junk'."""
     non_ws = text.translate(_WS_REMOVAL)
@@ -159,21 +177,30 @@ def _junk_ratio(text: str) -> float:
 
 def is_text_valid(text: str) -> bool:
     """
-    Evaluate whether extracted Devanagari text looks usable.
+    Evaluate whether extracted text looks usable.
 
     Uses a combined scoring approach:
     1. Text must not be empty.
-    2. At least 10 % of non-whitespace chars should be Devanagari
-       (lowered from 15 % to handle mixed Hindi/English documents).
-    3. If > 40 % of characters are junk/control characters, reject.
-    4. Bad-pattern count is weighed against Devanagari ratio —
+    2. Accept direct-extracted ASCII text layers as-is when the copied text is
+       clean English-style characters (`A-Za-z0-9`) even if it represents a
+       legacy font encoding such as Preeti.
+    3. Only apply the Devanagari Unicode quality checks when the extracted text
+       actually contains Devanagari characters.
+    4. If > 40 % of characters are junk/control characters, reject.
+    5. Bad-pattern count is weighed against Devanagari ratio —
        high Devanagari ratio tolerates more bad patterns.
     """
     stripped = text.strip()
     if not stripped:
         return False
 
+    if "\uFFFD" not in stripped and _ascii_printable_ratio(stripped) >= 0.85:
+        return _ascii_alnum_ratio(stripped) >= 0.20
+
     ratio = _devanagari_ratio(stripped)
+    if ratio == 0.0:
+        return False
+
     if ratio < 0.10:
         return False
 
@@ -222,22 +249,23 @@ def run_ocr_and_extract(pdf_path: Path) -> str:
     LOG.info("Running OCR fallback...")
     with tempfile.TemporaryDirectory() as temp_dir:
         ocr_output = Path(temp_dir) / "ocr_output.pdf"
-        try:
-            completed = subprocess.run(
-                [
-                    "ocrmypdf",
-                    "-l",
-                    "nep+hin",
-                    "--deskew",
-                    "--clean-final",
-                    "--optimize",
-                    "1",
-                    "--force-ocr",
-                    "--image-dpi",
-                    "300",
-                    str(pdf_path),
-                    str(ocr_output),
-                ],
+        base_command = [
+            "ocrmypdf",
+            "-l",
+            "nep+hin+eng",
+            "--deskew",
+            "--optimize",
+            "1",
+            "--force-ocr",
+            "--image-dpi",
+            "300",
+            str(pdf_path),
+            str(ocr_output),
+        ]
+
+        def run_ocr(command: list[str]) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                command,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -245,11 +273,26 @@ def run_ocr_and_extract(pdf_path: Path) -> str:
                 check=True,
                 timeout=SUBPROCESS_TIMEOUT,
             )
+
+        try:
+            completed = run_ocr(base_command[:4] + ["--clean-final"] + base_command[4:])
         except subprocess.TimeoutExpired:
             raise RuntimeError(f"OCR timed out after {SUBPROCESS_TIMEOUT}s.")
         except subprocess.CalledProcessError as exc:
             details = exc.stderr.strip() or exc.stdout.strip() or str(exc)
-            raise RuntimeError(f"OCR fallback failed: {details}") from exc
+            if "Could not find program 'unpaper'" in details:
+                LOG.warning("unpaper not found; retrying OCR without --clean-final.")
+                try:
+                    completed = run_ocr(base_command)
+                except subprocess.TimeoutExpired:
+                    raise RuntimeError(f"OCR timed out after {SUBPROCESS_TIMEOUT}s.")
+                except subprocess.CalledProcessError as retry_exc:
+                    retry_details = (
+                        retry_exc.stderr.strip() or retry_exc.stdout.strip() or str(retry_exc)
+                    )
+                    raise RuntimeError(f"OCR fallback failed: {retry_details}") from retry_exc
+            else:
+                raise RuntimeError(f"OCR fallback failed: {details}") from exc
 
         if completed.stderr.strip():
             LOG.debug(completed.stderr.strip())
@@ -304,12 +347,22 @@ def process_nepali_pdf(pdf_path: Path) -> tuple[str, str]:
 
     has_unicode = check_unicode_mapping(pdf_path)
     if has_unicode:
-        LOG.info("Unicode mapping found. Trying Poppler first.")
-        text = extract_with_poppler(pdf_path)
-        if is_text_valid(text):
-            return post_process_text(text), "poppler"
+        LOG.info("Unicode mapping found. Trying direct extraction first.")
+    else:
+        LOG.info("Missing Unicode mapping detected. Trying direct extraction before OCR.")
 
+    text = extract_with_poppler(pdf_path)
+    if is_text_valid(text):
+        return post_process_text(text), "poppler"
+
+    if has_unicode:
         LOG.info("Poppler output failed validation. Trying PDFMiner.")
+    elif text.strip():
+        LOG.info("Poppler returned copyable text but it was not valid ASCII/Devanagari. Trying PDFMiner.")
+    else:
+        LOG.info("Poppler returned no usable text. Falling back to OCR.")
+
+    if has_unicode or text.strip():
         try:
             text = _run_pdfminer_with_timeout(pdf_path)
         except Exception as exc:
@@ -320,8 +373,6 @@ def process_nepali_pdf(pdf_path: Path) -> tuple[str, str]:
             return post_process_text(text), "pdfminer"
 
         LOG.info("PDFMiner output failed validation. Falling back to OCR.")
-    else:
-        LOG.info("Missing Unicode mapping detected. Skipping directly to OCR.")
 
     text = run_ocr_and_extract(pdf_path)
     if text.strip():
