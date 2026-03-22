@@ -80,6 +80,7 @@ The tool is optimized for processing hundreds of PDFs:
 | :--------------------- | :----------------------------------------------------------------------------- |
 | **Custom Output Path** | `... nepali-pdf-text '/work/input.pdf' --output /work/custom.docx`             |
 | **High Performance**   | `... nepali-pdf-text --input-dir /work/pdf --output-dir /work/out --workers 8` |
+| **Large PDFs / Timeouts** | `... nepali-pdf-text --input-dir /work/pdf --ocr-timeout 7200 --pdfminer-timeout 1800` |
 | **Debug Logging**      | `... nepali-pdf-text --input-dir /work/pdf --verbose`                          |
 | **Errors Only**        | `... nepali-pdf-text --input-dir /work/pdf --quiet`                            |
 | **Help / Arguments**   | `docker run --rm nepali-pdf-text --help`                                       |
@@ -104,3 +105,4 @@ Then run: `python main.py --input-dir ./pdfs`
 - **`unpaper` error during OCR?** Rebuild the image after this update so the container includes `unpaper`: `docker build -t nepali-pdf-text .`
 - **Missing Nepali Font?** The Docker image automatically installs `fonts-lohit-deva` for proper DOCX rendering.
 - **OCR taking long?** This is normal for scanned PDFs as it runs deskewing and optimization.
+- **Very large PDFs (1000+ pages)?** Raise `--ocr-timeout`, `--pdfminer-timeout`, or `--pdftotext-timeout` instead of editing one shared timeout.

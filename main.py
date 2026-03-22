@@ -51,9 +51,17 @@ DEVANAGARI_RANGE = re.compile(r"[\u0900-\u097F]")
 # Characters considered "weird" punctuation / control that shouldn't dominate.
 _JUNK_CHARS = re.compile(r"[^\w\s\u0900-\u097F.,;:!?\-()\"'०-९]", re.UNICODE)
 
-# Subprocess timeout in seconds – prevents a single hung PDF from blocking
-# the entire batch forever.
-SUBPROCESS_TIMEOUT = 300
+# Stage-specific timeouts in seconds. Large PDFs often need far more time for
+# OCR than for font inspection or direct text extraction.
+DEFAULT_PDFFONTS_TIMEOUT = 120
+DEFAULT_PDFTOTEXT_TIMEOUT = 900
+DEFAULT_PDFMINER_TIMEOUT = 1200
+DEFAULT_OCR_TIMEOUT = 5400
+
+PDFFONTS_TIMEOUT = DEFAULT_PDFFONTS_TIMEOUT
+PDFTOTEXT_TIMEOUT = DEFAULT_PDFTOTEXT_TIMEOUT
+PDFMINER_TIMEOUT = DEFAULT_PDFMINER_TIMEOUT
+OCR_TIMEOUT = DEFAULT_OCR_TIMEOUT
 
 
 def ensure_python_dependencies() -> None:
@@ -91,10 +99,14 @@ def check_unicode_mapping(pdf_path: Path) -> bool:
             capture_output=True,
             text=True,
             check=True,
-            timeout=SUBPROCESS_TIMEOUT,
+            timeout=PDFFONTS_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        LOG.warning("pdffonts timed out for %s – assuming no Unicode mapping.", pdf_path.name)
+        LOG.warning(
+            "pdffonts timed out for %s after %ss – assuming no Unicode mapping.",
+            pdf_path.name,
+            PDFFONTS_TIMEOUT,
+        )
         return False
     except subprocess.CalledProcessError as exc:
         details = exc.stderr.strip() or exc.stdout.strip() or str(exc)
@@ -120,10 +132,10 @@ def extract_with_poppler(pdf_path: Path) -> str:
             encoding="utf-8",
             errors="replace",
             check=True,
-            timeout=SUBPROCESS_TIMEOUT,
+            timeout=PDFTOTEXT_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"pdftotext timed out after {SUBPROCESS_TIMEOUT}s.")
+        raise RuntimeError(f"pdftotext timed out after {PDFTOTEXT_TIMEOUT}s.")
     except subprocess.CalledProcessError as exc:
         details = exc.stderr.strip() or exc.stdout.strip() or str(exc)
         raise RuntimeError(f"Poppler extraction failed: {details}") from exc
@@ -271,13 +283,13 @@ def run_ocr_and_extract(pdf_path: Path) -> str:
                 encoding="utf-8",
                 errors="replace",
                 check=True,
-                timeout=SUBPROCESS_TIMEOUT,
+                timeout=OCR_TIMEOUT,
             )
 
         try:
             completed = run_ocr(base_command[:4] + ["--clean-final"] + base_command[4:])
         except subprocess.TimeoutExpired:
-            raise RuntimeError(f"OCR timed out after {SUBPROCESS_TIMEOUT}s.")
+            raise RuntimeError(f"OCR timed out after {OCR_TIMEOUT}s.")
         except subprocess.CalledProcessError as exc:
             details = exc.stderr.strip() or exc.stdout.strip() or str(exc)
             if "Could not find program 'unpaper'" in details:
@@ -285,7 +297,7 @@ def run_ocr_and_extract(pdf_path: Path) -> str:
                 try:
                     completed = run_ocr(base_command)
                 except subprocess.TimeoutExpired:
-                    raise RuntimeError(f"OCR timed out after {SUBPROCESS_TIMEOUT}s.")
+                    raise RuntimeError(f"OCR timed out after {OCR_TIMEOUT}s.")
                 except subprocess.CalledProcessError as retry_exc:
                     retry_details = (
                         retry_exc.stderr.strip() or retry_exc.stdout.strip() or str(retry_exc)
@@ -308,7 +320,7 @@ def _pdfminer_worker(pdf_path: str, return_dict: dict) -> None:
         return_dict["error"] = exc
 
 
-def _run_pdfminer_with_timeout(pdf_path: Path, timeout: int = SUBPROCESS_TIMEOUT) -> str:
+def _run_pdfminer_with_timeout(pdf_path: Path, timeout: int = PDFMINER_TIMEOUT) -> str:
     """Run pdfminer in a separate process to allow strict timeouts and avoid hangs."""
     manager = multiprocessing.Manager()
     return_dict = manager.dict()
@@ -560,6 +572,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of parallel workers for batch mode (default: 4).",
     )
     parser.add_argument(
+        "--pdffonts-timeout",
+        type=int,
+        default=DEFAULT_PDFFONTS_TIMEOUT,
+        help=f"Timeout in seconds for pdffonts (default: {DEFAULT_PDFFONTS_TIMEOUT}).",
+    )
+    parser.add_argument(
+        "--pdftotext-timeout",
+        type=int,
+        default=DEFAULT_PDFTOTEXT_TIMEOUT,
+        help=f"Timeout in seconds for pdftotext (default: {DEFAULT_PDFTOTEXT_TIMEOUT}).",
+    )
+    parser.add_argument(
+        "--pdfminer-timeout",
+        type=int,
+        default=DEFAULT_PDFMINER_TIMEOUT,
+        help=f"Timeout in seconds for PDFMiner (default: {DEFAULT_PDFMINER_TIMEOUT}).",
+    )
+    parser.add_argument(
+        "--ocr-timeout",
+        type=int,
+        default=DEFAULT_OCR_TIMEOUT,
+        help=f"Timeout in seconds for OCRmyPDF (default: {DEFAULT_OCR_TIMEOUT}).",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug-level logging output.",
@@ -581,6 +617,15 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         parser.error("--output-dir can only be used with --input-dir.")
     if args.workers < 1:
         parser.error("--workers must be at least 1.")
+    timeout_args = (
+        ("--pdffonts-timeout", args.pdffonts_timeout),
+        ("--pdftotext-timeout", args.pdftotext_timeout),
+        ("--pdfminer-timeout", args.pdfminer_timeout),
+        ("--ocr-timeout", args.ocr_timeout),
+    )
+    for flag, value in timeout_args:
+        if value < 1:
+            parser.error(f"{flag} must be at least 1.")
 
 
 def _configure_logging(verbose: bool = False, quiet: bool = False) -> None:
@@ -600,10 +645,16 @@ def _configure_logging(verbose: bool = False, quiet: bool = False) -> None:
 
 
 def main() -> int:
+    global PDFFONTS_TIMEOUT, PDFTOTEXT_TIMEOUT, PDFMINER_TIMEOUT, OCR_TIMEOUT
+
     parser = build_parser()
     args = parser.parse_args()
     validate_args(args, parser)
     _configure_logging(verbose=args.verbose, quiet=args.quiet)
+    PDFFONTS_TIMEOUT = args.pdffonts_timeout
+    PDFTOTEXT_TIMEOUT = args.pdftotext_timeout
+    PDFMINER_TIMEOUT = args.pdfminer_timeout
+    OCR_TIMEOUT = args.ocr_timeout
 
     try:
         ensure_python_dependencies()
