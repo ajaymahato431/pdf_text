@@ -31,6 +31,12 @@ Process all PDFs in your local `pdf/` folder and save to `out-batch/`:
 docker run --rm -v "${PWD}:/work" nepali-pdf-text --input-dir /work/pdf --output-dir /work/out-batch
 ```
 
+For high size pdfs
+
+```powershell
+docker run --rm -v "${PWD}:/work" nepali-pdf-text --input-dir /work/pdf --output-dir /work/out-batch --ocr-timeout 14400 --pdfminer-timeout 3600 --pdftotext-timeout 3600 --pdffonts-timeout 600
+```
+
 ---
 
 ## 🛠️ Flexible Use (Any Local Path)
@@ -63,27 +69,27 @@ _Note: `/input` and `/output` are just names used inside the container. You can 
 
 The tool is optimized for processing hundreds of PDFs:
 
-| Feature                | Command / Detail                                                   |
-| :--------------------- | :----------------------------------------------------------------- |
-| **Parallel Workers**   | Add `--workers 8` to use more CPU cores.                           |
-| **Progress Tracking**  | Shows `[3/150] ✓ filename` in real-time.                           |
-| **Batch Summary**      | Prints a structured results table at the end.                      |
-| **Auto-Naming**        | If `--output` is omitted, it saves `.docx` next to the source PDF. |
-| **Verbose / Quiet**    | Use `--verbose` for debug output or `--quiet` for errors only.     |
+| Feature                          | Command / Detail                                                           |
+| :------------------------------- | :------------------------------------------------------------------------- |
+| **Parallel Workers**             | Add `--workers 8` to use more CPU cores.                                   |
+| **Progress Tracking**            | Shows `[3/150] ✓ filename` in real-time.                                   |
+| **Batch Summary**                | Prints a structured results table at the end.                              |
+| **Auto-Naming**                  | If `--output` is omitted, it saves `.docx` next to the source PDF.         |
+| **Verbose / Quiet**              | Use `--verbose` for debug output or `--quiet` for errors only.             |
 | **Hindi + Nepali + English OCR** | OCR uses Nepali, Hindi, and English language data for mixed-language PDFs. |
 
 ---
 
 ## 📋 Common Commands Reference
 
-| Goal                   | Sample Command                                                                 |
-| :--------------------- | :----------------------------------------------------------------------------- |
-| **Custom Output Path** | `... nepali-pdf-text '/work/input.pdf' --output /work/custom.docx`             |
-| **High Performance**   | `... nepali-pdf-text --input-dir /work/pdf --output-dir /work/out --workers 8` |
+| Goal                      | Sample Command                                                                         |
+| :------------------------ | :------------------------------------------------------------------------------------- |
+| **Custom Output Path**    | `... nepali-pdf-text '/work/input.pdf' --output /work/custom.docx`                     |
+| **High Performance**      | `... nepali-pdf-text --input-dir /work/pdf --output-dir /work/out --workers 8`         |
 | **Large PDFs / Timeouts** | `... nepali-pdf-text --input-dir /work/pdf --ocr-timeout 7200 --pdfminer-timeout 1800` |
-| **Debug Logging**      | `... nepali-pdf-text --input-dir /work/pdf --verbose`                          |
-| **Errors Only**        | `... nepali-pdf-text --input-dir /work/pdf --quiet`                            |
-| **Help / Arguments**   | `docker run --rm nepali-pdf-text --help`                                       |
+| **Debug Logging**         | `... nepali-pdf-text --input-dir /work/pdf --verbose`                                  |
+| **Errors Only**           | `... nepali-pdf-text --input-dir /work/pdf --quiet`                                    |
+| **Help / Arguments**      | `docker run --rm nepali-pdf-text --help`                                               |
 
 ---
 
