@@ -1,114 +1,265 @@
 # Nepali PDF Text Extractor (DOCX Edition)
 
-This tool extracts high-accuracy Nepali text from PDFs and exports directly to **DOCX** files formatted with the **Mangal** font.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Docker Ready](https://img.shields.io/badge/docker-ready-2496ED.svg)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#)
 
-It uses a multi-stage approach for maximum accuracy:
+A high-accuracy tool to extract Nepali (Devanagari) text from PDF documents and export directly to clean **DOCX** files formatted in the **Mangal** font.
 
-1. **Direct Extraction**: Uses `pdftotext` (Poppler) for clean, layout-preserved text.
-2. **Font Fallback**: Uses `pdfminer.six` if standard extraction fails.
-3. **OCR Fallback**: Uses `ocrmypdf` with Nepali, Hindi, and English models for scanned or image-based PDFs.
-4. **ASCII Text Handling**: Keeps clean copyable `A-Za-z0-9` text as-is, including legacy-font text that will be converted later.
-5. **Accuracy Scoring**: Applies Devanagari validation only when the extracted text is actually Unicode Devanagari.
-6. **Post-Processing**: Normalizes Unicode (NFC), cleans whitespace, and formats for Word.
+Designed to reliably handle complex mixed-script documents, legacy font encodings (such as Preeti/Kantipur), low-quality scans, and massive multi-thousand-page PDFs.
 
 ---
 
-## 🚀 Quick Start (Docker)
+## 🔍 How It Works
 
-### 1. Build the Image (One-time only)
+The extraction pipeline follows a resilient multi-stage fallback strategy:
 
-Open PowerShell in this folder and build the image:
+```
+                      [ Input PDF ]
+                            │
+              Font Unicode Mapping Inspection
+                            │
+               ┌────────────┴────────────┐
+         [ Mapping OK ]            [ Missing ]
+               │                         │
+      Stage 1: Poppler (pdftotext)       │
+               │                         │
+         Passed Validation?              │
+          ├── YES ──> [ Unicode Normalization (NFC) ]
+          └── NO                         │
+               │                         │
+      Stage 2: PDFMiner.six              │
+               │                         │
+         Passed Validation?              │
+          ├── YES ──> [ Unicode Normalization (NFC) ]
+          └── NO                         │
+               └────────────┬────────────┘
+                            │
+      Stage 3: OCRmyPDF (Tesseract nep + hin + eng)
+               (Deskew + DPI optimization + unpaper)
+                            │
+                  Re-extract via Poppler
+                            │
+              [ Unicode Normalization (NFC) ]
+                            │
+             [ Export to Word DOCX (Mangal) ]
+```
 
-```powershell
+1. **Direct Extraction (Poppler)**: Fast, layout-preserving extraction via `pdftotext`.
+2. **Font Fallback (PDFMiner)**: Alternative text-stream parser executed in an isolated process with strict timeouts to prevent hangs.
+3. **OCR Fallback (OCRmyPDF / Tesseract)**: Triggers automatically for scanned pages or garbled fonts, combining Nepali, Hindi, and English OCR models with image deskewing.
+4. **ASCII & Legacy Font Preservation**: Retains clean copyable ASCII layers as-is, preserving text formatted in legacy fonts for subsequent conversion.
+5. **Heuristic Quality Scoring**: Validates Devanagari character ratios, filters junk glyphs, and detects bad font-mapping artifacts before accepting extracted text.
+6. **Word DOCX Generation**: Automatically structures paragraphs, collapses blank lines into paragraph spacing, and formats runs using the Devanagari-standard **Mangal** font.
+
+---
+
+## 🚀 Quick Start (Docker - Recommended)
+
+Docker is the simplest way to run the extractor without manually compiling Tesseract or Poppler language packages.
+
+### 1. Build the Docker Image
+
+```bash
 docker build -t nepali-pdf-text .
 ```
 
-### 2. Basic Usage (Current Folder)
+### 2. Process a Folder of PDFs
 
-Process all PDFs in your local `pdf/` folder and save to `out-batch/`:
+Process all PDFs inside your local `pdf/` directory and write `.docx` outputs to `out-batch/`:
 
+**PowerShell (Windows):**
 ```powershell
 docker run --rm -v "${PWD}:/work" nepali-pdf-text --input-dir /work/pdf --output-dir /work/out-batch
 ```
 
-For high size pdfs
+**Bash (Linux / macOS):**
+```bash
+docker run --rm -v "$(pwd):/work" nepali-pdf-text --input-dir /work/pdf --output-dir /work/out-batch
+```
 
+### 3. Process a Single PDF File
+
+**PowerShell (Windows):**
 ```powershell
-docker run --rm -v "${PWD}:/work" nepali-pdf-text --input-dir /work/pdf --output-dir /work/out-batch --ocr-timeout 14400 --pdfminer-timeout 3600 --pdftotext-timeout 3600 --pdffonts-timeout 600
+docker run --rm -v "${PWD}:/work" nepali-pdf-text /work/document.pdf --output /work/document.docx
+```
+
+**Bash (Linux / macOS):**
+```bash
+docker run --rm -v "$(pwd):/work" nepali-pdf-text /work/document.pdf --output /work/document.docx
 ```
 
 ---
 
-## 🛠️ Flexible Use (Any Local Path)
+## ⚙️ Configuration & Environment Variables
 
-**No need to move files or rebuild the image.** You can process PDFs from anywhere on your Windows disk by mounting them as volumes (`-v`).
+You can configure default timeouts, parallel workers, and OCR parameters via environment variables or a `.env` file.
 
-### Process a Single PDF from anywhere
+### Setting Up `.env`
 
-```powershell
-docker run --rm `
-  -v "C:\Users\ADMIN\Documents\MyPDFs:/input" `
-  -v "C:\Users\ADMIN\Desktop\output:/output" `
-  nepali-pdf-text '/input/somefile.pdf' --output /output/somefile.docx
+Copy the template file:
+
+```bash
+cp .env.example .env
 ```
 
-### Process an Entire Folder from anywhere
+Edit `.env` to suit your requirements:
 
+```env
+# Concurrency
+WORKERS=4
+
+# Timeouts in seconds (useful for large PDFs)
+PDFFONTS_TIMEOUT=120
+PDFTOTEXT_TIMEOUT=900
+PDFMINER_TIMEOUT=1200
+OCR_TIMEOUT=5400
+
+# OCR Settings
+OCR_LANGUAGES=nep+hin+eng
+OCR_IMAGE_DPI=300
+OCR_OPTIMIZE=1
+```
+
+### Using `.env` with Docker
+
+Pass `--env-file .env` directly to `docker run`:
+
+```bash
+docker run --rm --env-file .env -v "${PWD}:/work" nepali-pdf-text --input-dir /work/pdf --output-dir /work/out-batch
+```
+
+> **Note**: Command-line arguments always override values defined in `.env`.
+
+---
+
+## 🛠️ Flexible Directory Mounting (Any Local Path)
+
+You do not need to move files into the repository folder. Mount any directory from your machine:
+
+**Windows PowerShell:**
 ```powershell
 docker run --rm `
-  -v "D:\AllMyPDFs:/input" `
-  -v "D:\Results:/output" `
+  -v "D:\Documents\NepaliPDFs:/input" `
+  -v "D:\Documents\DOCX_Output:/output" `
   nepali-pdf-text --input-dir /input --output-dir /output --workers 4
 ```
 
-_Note: `/input` and `/output` are just names used inside the container. You can name them anything._
+**Linux / macOS:**
+```bash
+docker run --rm \
+  -v "/path/to/my/pdfs:/input" \
+  -v "/path/to/my/output:/output" \
+  nepali-pdf-text --input-dir /input --output-dir /output --workers 4
+```
 
 ---
 
-## ⚡ Batch Processing Features
+## 💻 Local Development (Non-Docker Setup)
 
-The tool is optimized for processing hundreds of PDFs:
+If you prefer running natively without Docker:
 
-| Feature                          | Command / Detail                                                           |
-| :------------------------------- | :------------------------------------------------------------------------- |
-| **Parallel Workers**             | Add `--workers 8` to use more CPU cores.                                   |
-| **Progress Tracking**            | Shows `[3/150] ✓ filename` in real-time.                                   |
-| **Batch Summary**                | Prints a structured results table at the end.                              |
-| **Auto-Naming**                  | If `--output` is omitted, it saves `.docx` next to the source PDF.         |
-| **Verbose / Quiet**              | Use `--verbose` for debug output or `--quiet` for errors only.             |
-| **Hindi + Nepali + English OCR** | OCR uses Nepali, Hindi, and English language data for mixed-language PDFs. |
+### 1. Install System Dependencies
+
+#### Ubuntu / Debian:
+```bash
+sudo apt-get update && sudo apt-get install -y \
+    poppler-utils \
+    ocrmypdf \
+    tesseract-ocr \
+    tesseract-ocr-nep \
+    tesseract-ocr-hin \
+    tesseract-ocr-eng \
+    unpaper \
+    fonts-lohit-deva
+```
+
+#### macOS (Homebrew):
+```bash
+brew install poppler ocrmypdf tesseract tesseract-lang unpaper
+```
+
+#### Windows:
+Using Docker is strongly recommended on Windows. If running natively, install:
+- [Poppler for Windows](https://github.com/oschwartz10612/poppler-windows/releases/) (add `bin/` to your `PATH`)
+- [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) (include Nepali and Hindi language data)
+- [Ghostscript](https://ghostscript.com/) (required by `ocrmypdf`)
+
+### 2. Install Python Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Run
+
+```bash
+# Process a single file
+python main.py sample.pdf --output sample.docx
+
+# Process a directory in batch
+python main.py --input-dir ./pdfs --output-dir ./outputs --workers 4
+```
 
 ---
 
-## 📋 Common Commands Reference
+## 📋 CLI Reference
 
-| Goal                      | Sample Command                                                                         |
-| :------------------------ | :------------------------------------------------------------------------------------- |
-| **Custom Output Path**    | `... nepali-pdf-text '/work/input.pdf' --output /work/custom.docx`                     |
-| **High Performance**      | `... nepali-pdf-text --input-dir /work/pdf --output-dir /work/out --workers 8`         |
-| **Large PDFs / Timeouts** | `... nepali-pdf-text --input-dir /work/pdf --ocr-timeout 7200 --pdfminer-timeout 1800` |
-| **Debug Logging**         | `... nepali-pdf-text --input-dir /work/pdf --verbose`                                  |
-| **Errors Only**           | `... nepali-pdf-text --input-dir /work/pdf --quiet`                                    |
-| **Help / Arguments**      | `docker run --rm nepali-pdf-text --help`                                               |
+```
+python main.py [input_pdf] [options]
+```
+
+| Argument | Description | Default |
+| :--- | :--- | :--- |
+| `input_pdf` | Path to a single PDF to process | None |
+| `--output` | Target `.docx` path for single-file mode | `<source_name>.docx` |
+| `--input-dir` | Path to directory containing PDFs for batch processing | None |
+| `--output-dir` | Directory to store generated `.docx` files | Same as source |
+| `--workers` | Parallel worker threads for batch mode | `4` (or `WORKERS` env) |
+| `--ocr-languages` | Tesseract OCR language models (joined with `+`) | `'nep+hin+eng'` |
+| `--ocr-dpi` | Resolution (DPI) for OCR image rasterization | `300` |
+| `--pdffonts-timeout` | Timeout in seconds for font inspection | `120` |
+| `--pdftotext-timeout` | Timeout in seconds for Poppler extraction | `900` |
+| `--pdfminer-timeout` | Timeout in seconds for PDFMiner extraction | `1200` |
+| `--ocr-timeout` | Timeout in seconds for OCR fallback | `5400` |
+| `--verbose`, `-v` | Enable detailed debug logging | False |
+| `--quiet`, `-q` | Suppress all terminal output except errors | False |
 
 ---
 
-## 🛠️ Local Development (Non-Docker)
+## ⚡ Handling Huge PDFs (1,000+ Pages)
 
-If you prefer running without Docker, ensure you have:
+For very large documents or slow scanned files, increase stage timeouts:
 
-1. **Tesseract OCR** (with Nepali, Hindi, and English data)
-2. **Poppler-utils** (for pdftotext)
-3. **Python packages**: `pip install -r requirements.txt`
+```bash
+docker run --rm -v "${PWD}:/work" nepali-pdf-text \
+  --input-dir /work/pdf \
+  --output-dir /work/out-batch \
+  --ocr-timeout 14400 \
+  --pdfminer-timeout 3600 \
+  --pdftotext-timeout 3600 \
+  --pdffonts-timeout 600
+```
 
-Then run: `python main.py --input-dir ./pdfs`
+Alternatively, set these once in your `.env` file.
 
 ---
 
 ## ❓ Troubleshooting
 
-- **Rebuild needed?** Only if you change `main.py` or `Dockerfile`. Run: `docker build -t nepali-pdf-text .`
-- **`unpaper` error during OCR?** Rebuild the image after this update so the container includes `unpaper`: `docker build -t nepali-pdf-text .`
-- **Missing Nepali Font?** The Docker image automatically installs `fonts-lohit-deva` for proper DOCX rendering.
-- **OCR taking long?** This is normal for scanned PDFs as it runs deskewing and optimization.
-- **Very large PDFs (1000+ pages)?** Raise `--ocr-timeout`, `--pdfminer-timeout`, or `--pdftotext-timeout` instead of editing one shared timeout.
+- **`unpaper not found` during OCR?**  
+  Ensure `unpaper` is installed or rebuild the Docker container (`docker build -t nepali-pdf-text .`). The script automatically catches missing `unpaper` and retries without post-processing deskew.
+- **Garbled font output?**  
+  If the source PDF uses legacy ASCII fonts (such as Preeti), the extractor deliberately preserves the copyable ASCII character layer so it can be converted accurately using a Devanagari Unicode mapping converter.
+- **Missing font rendering in Word?**  
+  The generated `.docx` files specify `Mangal` as the font family. Ensure your operating system or Microsoft Word has standard Devanagari font packs installed.
+- **Slow OCR execution?**  
+  Full OCR is CPU-intensive. Adjust `--workers` to match your CPU cores, or reduce `--ocr-dpi` (e.g., `--ocr-dpi 200`) for faster rasterization if scan quality permits.
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

@@ -1,6 +1,43 @@
+# Git
+.git/
+.gitignore
+
+# Environment files
+.env
+*.env
+
+# Docker
+.dockerignore
+Dockerfile
+
+# Documentation & metadata
+README.md
+LICENSE
+
+# Python cache & virtual environments
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .pytest_cache/
+.venv/
+venv/
+env/
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test data & outputs
+pdf/
+out_batch/
+out-batch/
+data/
+output/
+temp/
+*.pdf
+*.docx
 cleaned_output.txt
+*.log

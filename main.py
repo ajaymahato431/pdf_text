@@ -1,6 +1,7 @@
 import argparse
 import logging
 import multiprocessing
+import os
 import re
 import shutil
 import subprocess
@@ -9,6 +10,13 @@ import tempfile
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
 
 try:
     from pdfminer.high_level import extract_text as pdfminer_extract
@@ -51,17 +59,35 @@ DEVANAGARI_RANGE = re.compile(r"[\u0900-\u097F]")
 # Characters considered "weird" punctuation / control that shouldn't dominate.
 _JUNK_CHARS = re.compile(r"[^\w\s\u0900-\u097F.,;:!?\-()\"'०-९]", re.UNICODE)
 
+
+def _get_env_int(name: str, default: int) -> int:
+    val = os.environ.get(name)
+    if val is not None:
+        try:
+            return int(val)
+        except ValueError:
+            pass
+    return default
+
+
 # Stage-specific timeouts in seconds. Large PDFs often need far more time for
 # OCR than for font inspection or direct text extraction.
-DEFAULT_PDFFONTS_TIMEOUT = 120
-DEFAULT_PDFTOTEXT_TIMEOUT = 900
-DEFAULT_PDFMINER_TIMEOUT = 1200
-DEFAULT_OCR_TIMEOUT = 5400
+DEFAULT_PDFFONTS_TIMEOUT = _get_env_int("PDFFONTS_TIMEOUT", 120)
+DEFAULT_PDFTOTEXT_TIMEOUT = _get_env_int("PDFTOTEXT_TIMEOUT", 900)
+DEFAULT_PDFMINER_TIMEOUT = _get_env_int("PDFMINER_TIMEOUT", 1200)
+DEFAULT_OCR_TIMEOUT = _get_env_int("OCR_TIMEOUT", 5400)
+DEFAULT_WORKERS = _get_env_int("WORKERS", 4)
+DEFAULT_OCR_LANGUAGES = os.environ.get("OCR_LANGUAGES", "nep+hin+eng")
+DEFAULT_OCR_IMAGE_DPI = os.environ.get("OCR_IMAGE_DPI", "300")
+DEFAULT_OCR_OPTIMIZE = os.environ.get("OCR_OPTIMIZE", "1")
 
 PDFFONTS_TIMEOUT = DEFAULT_PDFFONTS_TIMEOUT
 PDFTOTEXT_TIMEOUT = DEFAULT_PDFTOTEXT_TIMEOUT
 PDFMINER_TIMEOUT = DEFAULT_PDFMINER_TIMEOUT
 OCR_TIMEOUT = DEFAULT_OCR_TIMEOUT
+OCR_LANGUAGES = DEFAULT_OCR_LANGUAGES
+OCR_IMAGE_DPI = DEFAULT_OCR_IMAGE_DPI
+OCR_OPTIMIZE = DEFAULT_OCR_OPTIMIZE
 
 
 def ensure_python_dependencies() -> None:
@@ -264,13 +290,13 @@ def run_ocr_and_extract(pdf_path: Path) -> str:
         base_command = [
             "ocrmypdf",
             "-l",
-            "nep+hin+eng",
+            OCR_LANGUAGES,
             "--deskew",
             "--optimize",
-            "1",
+            OCR_OPTIMIZE,
             "--force-ocr",
             "--image-dpi",
-            "300",
+            OCR_IMAGE_DPI,
             str(pdf_path),
             str(ocr_output),
         ]
@@ -568,8 +594,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workers",
         type=int,
-        default=4,
-        help="Number of parallel workers for batch mode (default: 4).",
+        default=DEFAULT_WORKERS,
+        help=f"Number of parallel workers for batch mode (default: {DEFAULT_WORKERS}).",
     )
     parser.add_argument(
         "--pdffonts-timeout",
@@ -596,6 +622,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Timeout in seconds for OCRmyPDF (default: {DEFAULT_OCR_TIMEOUT}).",
     )
     parser.add_argument(
+        "--ocr-languages",
+        default=DEFAULT_OCR_LANGUAGES,
+        help=f"OCR language models to use, joined by '+' (default: '{DEFAULT_OCR_LANGUAGES}').",
+    )
+    parser.add_argument(
+        "--ocr-dpi",
+        default=DEFAULT_OCR_IMAGE_DPI,
+        help=f"OCR rasterization DPI (default: {DEFAULT_OCR_IMAGE_DPI}).",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug-level logging output.",
@@ -617,6 +653,11 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         parser.error("--output-dir can only be used with --input-dir.")
     if args.workers < 1:
         parser.error("--workers must be at least 1.")
+    try:
+        if int(args.ocr_dpi) < 72:
+            parser.error("--ocr-dpi must be at least 72.")
+    except ValueError:
+        parser.error("--ocr-dpi must be an integer.")
     timeout_args = (
         ("--pdffonts-timeout", args.pdffonts_timeout),
         ("--pdftotext-timeout", args.pdftotext_timeout),
@@ -645,7 +686,7 @@ def _configure_logging(verbose: bool = False, quiet: bool = False) -> None:
 
 
 def main() -> int:
-    global PDFFONTS_TIMEOUT, PDFTOTEXT_TIMEOUT, PDFMINER_TIMEOUT, OCR_TIMEOUT
+    global PDFFONTS_TIMEOUT, PDFTOTEXT_TIMEOUT, PDFMINER_TIMEOUT, OCR_TIMEOUT, OCR_LANGUAGES, OCR_IMAGE_DPI
 
     parser = build_parser()
     args = parser.parse_args()
@@ -655,6 +696,8 @@ def main() -> int:
     PDFTOTEXT_TIMEOUT = args.pdftotext_timeout
     PDFMINER_TIMEOUT = args.pdfminer_timeout
     OCR_TIMEOUT = args.ocr_timeout
+    OCR_LANGUAGES = args.ocr_languages
+    OCR_IMAGE_DPI = str(args.ocr_dpi)
 
     try:
         ensure_python_dependencies()

@@ -1,4 +1,45 @@
-__pycache__
-pdf
-out_batch
-out-batch
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE & OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Data & Output directories (avoid committing heavy binaries to repo)
+pdf/
+out_batch/
+out-batch/
+data/
+output/
+temp/
+*.pdf
+*.docx
+!example*.pdf
+!sample*.pdf
+
+# Logs & temporary files
+*.log
+error_logs.txt
+cleaned_output.txt
